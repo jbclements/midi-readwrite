@@ -1,8 +1,13 @@
-#lang racket
+#lang racket/base
 
-(require rackunit)
+(require rackunit
+         racket/contract
+         racket/match)
 
-(provide parse-file)
+(provide/contract [midi-file-parse (-> path-string?
+                                       (listof list?))]
+                  [midi-port-parse (-> port?
+                                       (listof list?))])
 
 (struct chunk (id len body-offset) #:transparent)
 (struct header-info (format num-tracks time-division)
@@ -12,14 +17,23 @@
 ;; the MIDI format, the time division, and a list of 
 ;; tracks, where a track contains a list of time/message
 ;; lists
-(define (parse-file path)
+(define (midi-file-parse path)
   (define p (open-input-file path))
-  (define chunks (port->chunks p))
-  (define header-info (parse-header (first chunks) p))
-  (unless (= (header-info-num-tracks header-info) (length (rest chunks)))
+  (midi-port-parse p))
+
+;; given a port with the file-position operator, 
+;; parse the file into a list containing
+;; the MIDI format, the time division, and a list of 
+;; tracks, where a track contains a list of time/message
+;; lists
+(define (midi-port-parse port)
+  (define chunks (port->chunks port))
+  (define header-info (parse-header (car chunks) port))
+  (unless (= (header-info-num-tracks header-info) 
+             (length (cdr chunks)))
     (error 'parsing "wrong number of tracks"))
-  (define tracks (map (parse-chunk p) (cdr chunks)))
-  (close-input-port p)
+  (define tracks (map (parse-chunk port) (cdr chunks)))
+  (close-input-port port)
   (list (header-info-format header-info)
         (header-info-time-division header-info)
         tracks))
@@ -28,7 +42,7 @@
 (define (port->chunks port)
   (let loop ([offset 0])
     (match (bytes->chunk port offset)
-      [#f empty]
+      [#f null]
       [chunk 
        (cons chunk (loop (+ (chunk-body-offset chunk)
                             (chunk-len chunk))))])))
@@ -74,7 +88,7 @@
   (define stop-offset (+ offset len))
   (let loop ([prior-event-type-byte #f] [time 0])
     (cond [(<= stop-offset (file-position port))
-           empty]
+           '()]
           [else 
            (match-define (list new-time byte message)
              (parse-1-message port prior-event-type-byte time))
