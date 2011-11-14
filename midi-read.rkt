@@ -4,10 +4,15 @@
          racket/contract
          racket/match)
 
+(define midi-message? (list/c integer? list?))
+(define midi-track? (listof midi-message?))
+(define parsed-result? (list/c symbol? list? 
+                               (listof midi-track?)))
+
 (provide/contract [midi-file-parse (-> path-string?
-                                       (listof list?))]
+                                       parsed-result?)]
                   [midi-port-parse (-> port?
-                                       (listof list?))])
+                                       parsed-result?)])
 
 (struct chunk (id len body-offset) #:transparent)
 (struct header-info (format num-tracks time-division)
