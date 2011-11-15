@@ -4,6 +4,7 @@
 
 ;; controller names taken from 
 ;; http://www.midi.org/techspecs/midimessages.php
+(: num->controller-name (Integer -> String))
 (define (num->controller-name n)
   (match (vector-ref controller-name-table n)
     ["Undefined " (format "Undefined (~s)" n)]
@@ -131,4 +132,3 @@
   "Undefined "
   "Undefined "))
 
-(map second controller-name-table)
