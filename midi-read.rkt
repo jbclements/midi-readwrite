@@ -2,22 +2,53 @@
 
 (require typed/rackunit)
 
+(provide midi-file-parse
+         midi-port-parse
+         MIDIFile
+         MIDIFile-format
+         MIDIFile-division
+         MIDIFile-tracks
+         TicksPerQuarter
+         TicksPerQuarter?
+         TicksPerQuarter-ticks
+         SMPTE
+         SMPTE?
+         SMPTE-a
+         SMPTE-b
+         MetaMessage
+         MetaMessage?
+         MetaMessage-content
+         SysexMessage
+         SysexMessage?
+         SysexMessage-content
+         ChannelMessage
+         ChannelMessage?
+         ChannelMessage-kind
+         ChannelMessage-channel
+         ChannelMessage-operands)
+
+(struct: MIDIFile ([format : MIDIFormat]
+                   [division : MIDIDivision]
+                   [tracks : (Listof MIDITrack)])
+  #:transparent)
+
+(define-type MIDIFormat (U 'multi 'single 'sequential))
+(define-type MIDIDivision (U TicksPerQuarter SMPTE))
+(struct: TicksPerQuarter ([ticks : Natural]) #:transparent)
+(struct: SMPTE ([a : Natural] [b : Natural]) #:transparent)
+
+(define-type MIDITrack (Listof MIDIEvent))
+
 (define-type MIDIEvent (List Integer MIDIMessage))
 (define-type MIDIMessage (U MetaMessage ChannelMessage SysexMessage))
-(struct: MetaMessage ([content : Any]))
-(struct: SysexMessage ([content : Any]))
+(struct: MetaMessage ([content : Any]) #:transparent)
+(struct: SysexMessage ([content : Any]) #:transparent)
 (struct: ChannelMessage ([kind : MIDIKind] 
                          [channel : Byte]
-                         [operands : (List Byte (U Byte False))]))
+                         [operands : (List Byte (U Byte False))]) 
+  #:transparent)
 (define-type MIDIKind Symbol)
 
-(define-type MIDITrack (Listof MIDIMessage))
-(struct: MIDIFile ([format : (U 'multi 'single 'sequential)]
-                   [division : (U ClocksPerQuarter SMPTE)]
-                   [tracks : (Listof MIDITrack)]))
-
-(struct: ClocksPerQuarter ([clocks : Natural]))
-(struct: SMPTE ([a : Natural] [b : Natural]))
 
 #|
 (provide/contract [midi-file-parse (-> path-string?
@@ -28,14 +59,12 @@
 
 ;; FILE CONSTRUCTS:
 (struct: FileChunk ([id : Bytes] [len : Natural] [offset : Natural]))
-#;(struct header-info (format num-tracks time-division)
-  #:transparent)
 
-#|
 ;; given a path, parse the file into a list containing
 ;; the MIDI format, the time division, and a list of 
 ;; tracks, where a track contains a list of time/message
 ;; lists
+(: midi-file-parse (Path-String -> MIDIFile))
 (define (midi-file-parse path)
   (define p (open-input-file path))
   (midi-port-parse p))
@@ -45,56 +74,74 @@
 ;; the MIDI format, the time division, and a list of 
 ;; tracks, where a track contains a list of time/message
 ;; lists
+(: midi-port-parse (Input-Port -> MIDIFile))
 (define (midi-port-parse port)
   (define chunks (port->chunks port))
   (define header-info (parse-header (car chunks) port))
-  (unless (= (header-info-num-tracks header-info) 
+  (unless (= (cadr header-info) 
              (length (cdr chunks)))
     (error 'parsing "wrong number of tracks"))
   (define tracks (map (parse-chunk port) (cdr chunks)))
   (close-input-port port)
-  (list (header-info-format header-info)
-        (header-info-time-division header-info)
-        tracks))
+  (MIDIFile (car header-info)
+            (caddr header-info)
+            tracks))
 
 ;; pick out all of the chunk locations in a file.
+(: port->chunks (Input-Port -> (Listof FileChunk)))
 (define (port->chunks port)
-  (let loop ([offset 0])
-    (match (bytes->chunk port offset)
-      [#f null]
-      [chunk 
-       (cons chunk (loop (+ (chunk-body-offset chunk)
-                            (chunk-len chunk))))])))
+  (let: loop : (Listof FileChunk) ([offset : Natural 0])
+    (define chunk (bytes->chunk port offset))
+    (case chunk
+      [(#f) null]
+      [else 
+       (cons chunk (loop (+ (FileChunk-offset chunk)
+                            (FileChunk-len chunk))))])))
 
 
 (define header-len 6)
 
 ;; given a header chunk and a port, produce the header-info
+(: parse-header (FileChunk Input-Port -> (List MIDIFormat
+                                               Natural
+                                               MIDIDivision)))
 (define (parse-header h-chunk port)
-  (match h-chunk
-    [(chunk #"MThd" 6 header-offset)
-     (define header-bytes (bytes-from-posn port header-offset 6))
-     (define format 
-       (match (integer-bytes->integer (subbytes header-bytes 0 2) #f #t)
-         [0 'single]
-         [1 'multi]
-         [2 'sequential]))
+  (unless (equal? (FileChunk-id h-chunk) #"MThd")
+    (error 'parse-header "header chunk didn't have id MThd"))
+  (unless (equal? (FileChunk-len h-chunk) 6)
+    (error 'parse-header "header chunk didn't have length 6"))
+  (define header-bytes (bytes-from-posn port 
+                                        (FileChunk-offset h-chunk )
+                                        6))
+  (cond 
+    [(eof-object? header-bytes)
+     (error 'parse-header "got #<eof> while reading header")]
+    [else
+     (define format-bytes 
+       (integer-bytes->unsigned (subbytes header-bytes 0 2)))
+     (define format
+       (case format-bytes
+         [(0) 'single]
+         [(1) 'multi]
+         [(2) 'sequential]
+         [else (error 'parse-header "unexpected format number: ~s"
+                      format-bytes)]))
      (define num-tracks
-       (integer-bytes->integer (subbytes header-bytes 2 4) #f #t))
+       (integer-bytes->unsigned (subbytes header-bytes 2 4)))
      (define division-word
-       (integer-bytes->integer (subbytes header-bytes 4 6) #f #t))
+       (integer-bytes->unsigned (subbytes header-bytes 4 6)))
      (define division
        (cond [(= 0 (bitwise-and #x8000 division-word))
-              (list 'ticks-per-quarter 
-                    (bitwise-and #x7ffff division-word))]
+              (TicksPerQuarter 
+               (bitwise-and #x7ffff division-word))]
              [else
-              (list 'time-code
-                    (bitwise-and 
-                     #x7f 
-                     (arithmetic-shift division-word -8))
-                    (bitwise-and #xff division-word))]))
-     (header-info format num-tracks division)]))
-|#
+              (SMPTE
+               (bitwise-and 
+                #x7f 
+                (arithmetic-shift division-word -8))
+               (bitwise-and #xff division-word))]))
+     (list format num-tracks division)]))
+
 
 
 ;; given a port and a chunk, parse the messages in the chunk
@@ -150,11 +197,11 @@
         (MetaMessage
          (case meta-kind
            ;; just doing the ones I see....
-           [(#x01) (list 'text (read-variable-length port))]
+           [(#x01) (list 'text (read-variable-length-bytes port))]
            [(#x02) (list 'copyright-notice 
-                         (read-variable-length port))]
+                         (read-variable-length-bytes port))]
            [(#x03) (list 'sequence/track-name 
-                         (read-variable-length port))]
+                         (read-variable-length-bytes port))]
            [(#x2f) (len-and-bytes port)
                    'end-of-track]
            [(#x51) (define content (len-and-bytes port))
@@ -264,6 +311,14 @@
                 "#<eof> while reading bytes")]
         [else b]))
 
+(: read-variable-length-bytes (Input-Port -> Bytes))
+(define (read-variable-length-bytes port)
+  (define len (read-variable-length port))
+  (define b (read-bytes len port))
+  (cond [(eof-object? b)
+         (error 'read-variable-length-bytes
+                "got #<eof> during variable-length text")]
+        [else b]))
 
 ;; read a variable-length quantity, advance the port
 ;; if these can be negative, I'm worried.
@@ -310,8 +365,6 @@
   (define b (read-byte port))
   (cond [(eof-object? b) (error 'read-non-eof-byte "got #<eof>")]
         [else b]))
-
-
 
 
 (check-equal? (read-variable-length
