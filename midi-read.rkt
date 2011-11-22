@@ -1,53 +1,10 @@
 #lang typed/racket/base
 
-(require typed/rackunit)
+(require typed/rackunit
+         "midi-structs.rkt")
 
 (provide midi-file-parse
-         midi-port-parse
-         MIDIFile
-         MIDIFile-format
-         MIDIFile-division
-         MIDIFile-tracks
-         TicksPerQuarter
-         TicksPerQuarter?
-         TicksPerQuarter-ticks
-         SMPTE
-         SMPTE?
-         SMPTE-a
-         SMPTE-b
-         MetaMessage
-         MetaMessage?
-         MetaMessage-content
-         SysexMessage
-         SysexMessage?
-         SysexMessage-content
-         ChannelMessage
-         ChannelMessage?
-         ChannelMessage-kind
-         ChannelMessage-channel
-         ChannelMessage-operands)
-
-(struct: MIDIFile ([format : MIDIFormat]
-                   [division : MIDIDivision]
-                   [tracks : (Listof MIDITrack)])
-  #:transparent)
-
-(define-type MIDIFormat (U 'multi 'single 'sequential))
-(define-type MIDIDivision (U TicksPerQuarter SMPTE))
-(struct: TicksPerQuarter ([ticks : Natural]) #:transparent)
-(struct: SMPTE ([a : Natural] [b : Natural]) #:transparent)
-
-(define-type MIDITrack (Listof MIDIEvent))
-
-(define-type MIDIEvent (List Integer MIDIMessage))
-(define-type MIDIMessage (U MetaMessage ChannelMessage SysexMessage))
-(struct: MetaMessage ([content : Any]) #:transparent)
-(struct: SysexMessage ([content : Any]) #:transparent)
-(struct: ChannelMessage ([kind : MIDIKind] 
-                         [channel : Byte]
-                         [operands : (List Byte (U Byte False))]) 
-  #:transparent)
-(define-type MIDIKind Symbol)
+         midi-port-parse)
 
 
 #|
@@ -91,7 +48,7 @@
 (: port->chunks (Input-Port -> (Listof FileChunk)))
 (define (port->chunks port)
   (let: loop : (Listof FileChunk) ([offset : Natural 0])
-    (define chunk (bytes->chunk port offset))
+    (define chunk (chunk-discover port offset))
     (case chunk
       [(#f) null]
       [else 
@@ -335,8 +292,8 @@
 
 
 ;; given a port and an offset, read the chunk info starting at that offset.
-(: bytes->chunk (Input-Port Natural -> (U FileChunk False)))
-(define (bytes->chunk port offset)
+(: chunk-discover (Input-Port Natural -> (U FileChunk False)))
+(define (chunk-discover port offset)
   (define bytes-in (bytes-from-posn port offset 8))
   (cond 
     [(eof-object? bytes-in) #f]
