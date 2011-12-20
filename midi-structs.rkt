@@ -1,50 +1,39 @@
 #lang typed/racket/base
 
 
-(provide MIDIFile
-         #;MIDIFile-format
-         #;MIDIFile-division
-         #;MIDIFile-tracks
-         TicksPerQuarter
-         #;TicksPerQuarter?
-         #;TicksPerQuarter-ticks
-         SMPTE
-         #;SMPTE?
-         #;SMPTE-a
-         #;SMPTE-b
-         MetaMessage
-         MetaMessage?
-         MetaMessage-content
-         SysexMessage
-         SysexMessage?
-         SysexMessage-content
-         ChannelMessage
-         ChannelMessage?
-         ChannelMessage-kind
-         ChannelMessage-channel
-         ChannelMessage-operands
+(provide (struct-out MIDIFile)
+         (struct-out TicksPerQuarter)
+         (struct-out SMPTE)
+         (struct-out MetaMessage)
+         (struct-out SysexMessage)
+         (struct-out ChannelMessage)
+         MIDITrack
          MIDIFormat
          MIDIDivision
          MIDIEvent
-         MIDIMessage)
+         MIDIMessage
+         Clocks)
 
-(struct: MIDIFile ([format : MIDIFormat]
-                   [division : MIDIDivision]
-                   [tracks : (Listof MIDITrack)])
+(define-struct: MIDIFile ([format : MIDIFormat]
+                          [division : MIDIDivision]
+                          [tracks : (Listof MIDITrack)])
   #:transparent)
 
 (define-type MIDIFormat (U 'multi 'single 'sequential))
 (define-type MIDIDivision (U TicksPerQuarter SMPTE))
-(struct: TicksPerQuarter ([ticks : Natural]) #:transparent)
-(struct: SMPTE ([a : Natural] [b : Natural]) #:transparent)
+(define-struct: TicksPerQuarter ([ticks : Clocks]) #:transparent)
+(define-struct: SMPTE ([a : Natural] [b : Natural]) #:transparent)
 
+;; hidden invariant: the events in the track must have increasing times
 (define-type MIDITrack (Listof MIDIEvent))
 
-(define-type MIDIEvent (List Integer MIDIMessage))
+;; Clocks absolute, relative to start of track.
+(define-type MIDIEvent (List Clocks MIDIMessage))
+(define-type Clocks Natural)
 (define-type MIDIMessage (U MetaMessage ChannelMessage SysexMessage))
-(struct: MetaMessage ([content : Any]) #:transparent)
-(struct: SysexMessage ([content : Any]) #:transparent)
-(struct: ChannelMessage ([kind : MIDIKind] 
+(define-struct: MetaMessage ([content : Any]) #:transparent)
+(define-struct: SysexMessage ([content : Any]) #:transparent)
+(define-struct: ChannelMessage ([kind : MIDIKind] 
                          [channel : Byte]
                          [operands : (List Byte (U Byte False))]) 
   #:transparent)

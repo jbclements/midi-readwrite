@@ -34,6 +34,8 @@
 (: midi-port-parse (Input-Port -> MIDIFile))
 (define (midi-port-parse port)
   (define chunks (port->chunks port))
+  (when (null? chunks)
+    (error 'midi-port-parse "midi file contained no chunks at all"))
   (define header-info (parse-header (car chunks) port))
   (unless (= (cadr header-info) 
              (length (cdr chunks)))
