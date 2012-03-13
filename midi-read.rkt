@@ -1,27 +1,27 @@
-#lang racket/base
+#lang typed/racket/base
 
-(require rackunit
-         racket/contract
-         racket/match)
+(require typed/rackunit
+         "midi-structs.rkt")
 
-(define midi-message? (list/c integer? list?))
-(define midi-track? (listof midi-message?))
-(define parsed-result? (list/c symbol? list? 
-                               (listof midi-track?)))
+(provide midi-file-parse
+         midi-port-parse)
 
+
+#|
 (provide/contract [midi-file-parse (-> path-string?
                                        parsed-result?)]
                   [midi-port-parse (-> port?
                                        parsed-result?)])
+|#
 
-(struct chunk (id len body-offset) #:transparent)
-(struct header-info (format num-tracks time-division)
-  #:transparent)
+;; FILE CONSTRUCTS:
+(struct: FileChunk ([id : Bytes] [len : Natural] [offset : Natural]))
 
 ;; given a path, parse the file into a list containing
 ;; the MIDI format, the time division, and a list of 
 ;; tracks, where a track contains a list of time/message
 ;; lists
+(: midi-file-parse (Path-String -> MIDIFile))
 (define (midi-file-parse path)
   (define p (open-input-file path))
   (midi-port-parse p))
@@ -31,182 +31,260 @@
 ;; the MIDI format, the time division, and a list of 
 ;; tracks, where a track contains a list of time/message
 ;; lists
+(: midi-port-parse (Input-Port -> MIDIFile))
 (define (midi-port-parse port)
   (define chunks (port->chunks port))
+  (when (null? chunks)
+    (error 'midi-port-parse "midi file contained no chunks at all"))
   (define header-info (parse-header (car chunks) port))
-  (unless (= (header-info-num-tracks header-info) 
+  (unless (= (cadr header-info) 
              (length (cdr chunks)))
     (error 'parsing "wrong number of tracks"))
   (define tracks (map (parse-chunk port) (cdr chunks)))
   (close-input-port port)
-  (list (header-info-format header-info)
-        (header-info-time-division header-info)
-        tracks))
+  (MIDIFile (car header-info)
+            (caddr header-info)
+            tracks))
 
 ;; pick out all of the chunk locations in a file.
+(: port->chunks (Input-Port -> (Listof FileChunk)))
 (define (port->chunks port)
-  (let loop ([offset 0])
-    (match (bytes->chunk port offset)
-      [#f null]
-      [chunk 
-       (cons chunk (loop (+ (chunk-body-offset chunk)
-                            (chunk-len chunk))))])))
+  (let: loop : (Listof FileChunk) ([offset : Natural 0])
+    (define chunk (chunk-discover port offset))
+    (case chunk
+      [(#f) null]
+      [else 
+       (cons chunk (loop (+ (FileChunk-offset chunk)
+                            (FileChunk-len chunk))))])))
 
 
 (define header-len 6)
 
 ;; given a header chunk and a port, produce the header-info
+(: parse-header (FileChunk Input-Port -> (List MIDIFormat
+                                               Natural
+                                               MIDIDivision)))
 (define (parse-header h-chunk port)
-  (match h-chunk
-    [(chunk #"MThd" 6 header-offset)
-     (define header-bytes (bytes-from-posn port header-offset 6))
-     (define format 
-       (match (integer-bytes->integer (subbytes header-bytes 0 2) #f #t)
-         [0 'single]
-         [1 'multi]
-         [2 'sequential]))
+  (unless (equal? (FileChunk-id h-chunk) #"MThd")
+    (error 'parse-header "header chunk didn't have id MThd"))
+  (unless (equal? (FileChunk-len h-chunk) 6)
+    (error 'parse-header "header chunk didn't have length 6"))
+  (define header-bytes (bytes-from-posn port 
+                                        (FileChunk-offset h-chunk )
+                                        6))
+  (cond 
+    [(eof-object? header-bytes)
+     (error 'parse-header "got #<eof> while reading header")]
+    [else
+     (define format-bytes 
+       (integer-bytes->unsigned (subbytes header-bytes 0 2)))
+     (define format
+       (case format-bytes
+         [(0) 'single]
+         [(1) 'multi]
+         [(2) 'sequential]
+         [else (error 'parse-header "unexpected format number: ~s"
+                      format-bytes)]))
      (define num-tracks
-       (integer-bytes->integer (subbytes header-bytes 2 4) #f #t))
+       (integer-bytes->unsigned (subbytes header-bytes 2 4)))
      (define division-word
-       (integer-bytes->integer (subbytes header-bytes 4 6) #f #t))
+       (integer-bytes->unsigned (subbytes header-bytes 4 6)))
      (define division
        (cond [(= 0 (bitwise-and #x8000 division-word))
-              (list 'ticks-per-quarter 
-                    (bitwise-and #x7ffff division-word))]
+              (TicksPerQuarter 
+               (bitwise-and #x7ffff division-word))]
              [else
-              (list 'time-code
-                    (bitwise-and 
-                     #x7f 
-                     (arithmetic-shift division-word -8))
-                    (bitwise-and #xff division-word))]))
-     (header-info format num-tracks division)]))
+              (SMPTE
+               (bitwise-and 
+                #x7f 
+                (arithmetic-shift division-word -8))
+               (bitwise-and #xff division-word))]))
+     (list format num-tracks division)]))
+
+
 
 ;; given a port and a chunk, parse the messages in the chunk
+(: parse-chunk (Input-Port -> (FileChunk -> (Listof MIDIEvent))))
 (define ((parse-chunk port) a-chunk)
-  (parse-messages port (chunk-body-offset a-chunk)
-                  (chunk-len a-chunk)))
+  (parse-messages port (FileChunk-offset a-chunk)
+                  (FileChunk-len a-chunk)))
+
+
 
 ;; given a port, an offset, and a length in bytes, parse
 ;; the messages contained in the file at that location
+(: parse-messages (Input-Port Natural Natural -> 
+                              (Listof MIDIEvent)))
 (define (parse-messages port offset len)
   (file-position port offset)
   (define stop-offset (+ offset len))
-  (let loop ([prior-event-type-byte #f] [time 0])
+  (let: loop : (Listof MIDIEvent)
+    ([prior-event-type-byte : (U Byte False) #f]
+     [time : Natural 0])
     (cond [(<= stop-offset (file-position port))
            '()]
           [else 
-           (match-define (list new-time byte message)
+           (define bundle 
              (parse-1-message port prior-event-type-byte time))
+           (define new-time (car bundle))
+           (define byte (cadr bundle))
+           (define message (caddr bundle))
            (cons (list new-time message) (loop byte new-time))])))
+
 
 ;; given a port, a prior event-type-byte, and a prior time,
 ;; return a list containing the new time, the new event-type-byte,
 ;; and the new message. The second of these is necessary to support
 ;; the "and another of the same" style of message.
+(: parse-1-message (Input-Port (U Byte False) Natural -> 
+                               (List Natural (U Byte False) MIDIMessage)))
 (define (parse-1-message port prior-event-type-byte prior-time)
   (define time-offset (read-variable-length port))
   (define new-time (+ prior-time time-offset))
-  (match-define (list event-type-byte message)
-    (match (read-byte port)
-      [#xf0 (list 
-             #f
-             (list
-              'sysex
-              (len-and-bytes port)))]
-      [#xff (list 
-             #f
-             (list 
-              'meta
-              (match (read-byte port)
-                ;; just doing the ones I see....
-                [#x01 (parse-text-meta 'text port)]
-                [#x02 (parse-text-meta 'copyright-notice port)]
-                [#x03 (parse-text-meta 'sequence/track-name port)]
-                [#x2f (len-and-bytes port)
-                      'end-of-track]
-                [#x51 (define content (len-and-bytes port))
-                      (list 'set-tempo 
-                            (integer-bytes->integer
-                             (bytes-append (bytes #x00)
-                                           content)
-                             #f #t))]
-                [#x58 (define content (len-and-bytes port))
-                      (list 'time-signature
-                            (bytes->list content))]
-                [#x59 (define content (len-and-bytes port))
-                      (define flats/sharps-byte (subbytes content 0 1))
-                      (define major/minor
-                        (match (bytes-ref content 1)
-                          [#x00 'major]
-                          [#x01 'minor]))
-                      (list 'key-signature
-                            flats/sharps-byte
-                            major/minor)]
-                [other
-                 (list 'unknown other (len-and-bytes port))]
-                )))]
-      [midi-evt 
-       (cond [(not (= 0 (bitwise-and #x80 midi-evt)))
+  (define next-byte (read-non-eof-byte port))
+  (define bundle
+    (case next-byte
+      [(#xf0) 
+       (list 
+        #f
+        (SysexMessage
+         (len-and-bytes port)))]
+      [(#xff) 
+       (define meta-kind (read-non-eof-byte port))
+       (list 
+        #f
+        (MetaMessage
+         (case meta-kind
+           ;; just doing the ones I see....
+           [(#x01) (list 'text (read-variable-length-bytes port))]
+           [(#x02) (list 'copyright-notice 
+                         (read-variable-length-bytes port))]
+           [(#x03) (list 'sequence/track-name 
+                         (read-variable-length-bytes port))]
+           [(#x2f) (len-and-bytes port)
+                   'end-of-track]
+           [(#x51) (define content (len-and-bytes port))
+                   (list 'set-tempo 
+                         (integer-bytes->integer
+                          (bytes-append (bytes #x00)
+                                        content)
+                          #f #t))]
+           [(#x58) (define content (len-and-bytes port))
+                   (list 'time-signature
+                         (bytes->list content))]
+           [(#x59) (define content (len-and-bytes port))
+                   (define flats/sharps-byte (subbytes content 0 1))
+                   (define major/minor
+                     (case (bytes-ref content 1)
+                       [(#x00) 'major]
+                       [(#x01) 'minor]))
+                   (list 'key-signature
+                         flats/sharps-byte
+                         major/minor)]
+           [else
+            (list 'unknown meta-kind (len-and-bytes port))]
+           )))]
+      [else 
+       (cond [(not (= 0 (bitwise-and #x80 next-byte)))
               ;; new message
-              (define channel (bitwise-and #x7 midi-evt))
-              (define message-nibble (arithmetic-shift midi-evt -4))
+              (define channel (bitwise-and #x7 next-byte))
+              (define message-nibble (high-nibble next-byte))
               (define message-kind (bits->event-type message-nibble))
-              (define parameter-1 (read-byte port))
+              (define parameter-1 (read-non-eof-byte port))
               (define parameter-2 
                 (cond [(two-byte-event? message-nibble)
-                       (read-byte port)]
+                       (read-non-eof-byte port)]
                       [else #f]))
-              (list midi-evt
-                    (list message-kind
-                          channel
-                          parameter-1
-                          parameter-2))]
+              (list next-byte
+                    (ChannelMessage
+                     message-kind
+                     channel
+                     (list parameter-1
+                           parameter-2)))]
              [else
-              ;; running status , the midi-evt was actually parameter 1.
-              (define channel (bitwise-and #x7 prior-event-type-byte))
-              (define message-nibble (arithmetic-shift 
-                                      prior-event-type-byte -4))
-              (define message-kind (bits->event-type message-nibble))
-              (define parameter-1 midi-evt)
-              (define parameter-2 
-                (cond [(two-byte-event? message-nibble)
-                       (read-byte port)]
-                      [else #f]))
-              (list prior-event-type-byte
-                    (list message-kind
-                          channel
-                          parameter-1
-                          parameter-2))
+              (cond 
+                [(not prior-event-type-byte)
+                 (error 'parse-1-message
+                        "can't continue from non-channel event")]
+                [else
+                 ;; running status , the midi-evt was actually parameter 1.
+                 (define channel (bitwise-and #x7 prior-event-type-byte))
+                 (define message-nibble (high-nibble 
+                                         prior-event-type-byte))
+                 (define message-kind (bits->event-type message-nibble))
+                 (define parameter-1 next-byte)
+                 (define parameter-2 
+                   (cond [(two-byte-event? message-nibble)
+                          (read-non-eof-byte port)]
+                         [else #f]))
+                 (list prior-event-type-byte
+                       (ChannelMessage
+                        message-kind
+                        channel
+                        (list parameter-1
+                              parameter-2)))])
               ])]))
-  (list new-time event-type-byte message))
+  
+  (define event-type-byte (car bundle))
+  (define message (cadr bundle))
+  (list new-time event-type-byte message)
+  )
 
+(: high-nibble (Byte -> Byte))
+(define (high-nibble b)
+  (define r (arithmetic-shift b -4))
+  (cond [(< 255 r) (error 'high-nibble "impossible 20111114-2")]
+        [else r]))
+
+
+(: two-byte-event? (Byte -> Boolean))
 (define (two-byte-event? bits)
   (not (or (= bits #xc) (= bits #xd))))
 
-(define (bits->event-type bits)
-  (match bits
-    [#x8 'note-off]
-    [#x9 'note-on]
-    [#xa 'aftertouch]
-    [#xb 'control-change]
-    [#xc 'program-change]
-    [#xd 'channel-aftertouch]
-    [#xe 'pitch-bend]))
 
-(define (parse-text-meta tag port)
+(: bits->event-type (Byte -> Symbol))
+(define (bits->event-type bits)
+  (case bits 
+    ((#x8) 'note-off)
+    [(#x9) 'note-on]
+    [(#xa) 'aftertouch]
+    [(#xb) 'control-change]
+    [(#xc) 'program-change]
+    [(#xd) 'channel-aftertouch]
+    [(#xe) 'pitch-bend]
+    (else (error 'bits->event-type
+                 "unexpected event type: ~s" bits))))
+
+
+#;(define (parse-text-meta tag port)
   (list tag (len-and-bytes port)))
 
+
 ;; read a length and that number of bytes from a port
+(: len-and-bytes : (Input-Port -> Bytes))
 (define (len-and-bytes port)
   (define len (read-variable-length port))
-  (read-bytes len port))
+  (define b (read-bytes len port))
+  (cond [(eof-object? b)
+         (error 'len-and-bytes
+                "#<eof> while reading bytes")]
+        [else b]))
 
+(: read-variable-length-bytes (Input-Port -> Bytes))
+(define (read-variable-length-bytes port)
+  (define len (read-variable-length port))
+  (define b (read-bytes len port))
+  (cond [(eof-object? b)
+         (error 'read-variable-length-bytes
+                "got #<eof> during variable-length text")]
+        [else b]))
 
 ;; read a variable-length quantity, advance the port
 ;; if these can be negative, I'm worried.
+(: read-variable-length (Input-Port -> Natural))
 (define (read-variable-length port)
-  (let loop ([so-far #x00])
-    (define next-byte (read-byte port))
+  (let: loop : Natural ([so-far : Natural #x00])
+    (define next-byte (read-non-eof-byte port))
     (define new-so-far (bitwise-ior 
                         (arithmetic-shift so-far 7)
                         (bitwise-and #x7f next-byte)))
@@ -214,25 +292,43 @@
            (loop new-so-far)]
           [else new-so-far])))
 
+
+;; given a port and an offset, read the chunk info starting at that offset.
+(: chunk-discover (Input-Port Natural -> (U FileChunk False)))
+(define (chunk-discover port offset)
+  (define bytes-in (bytes-from-posn port offset 8))
+  (cond 
+    [(eof-object? bytes-in) #f]
+    [else
+     (let* ([id (subbytes bytes-in 0 4)]
+            [len (integer-bytes->unsigned (subbytes bytes-in 4 8))])
+       (FileChunk id len (+ offset 8)))]))
+
+
+;; bytes-from-posn : port nat nat -> bytes
+;; read a piece from a file
+(: bytes-from-posn (Input-Port Natural Natural -> (U Bytes EOF)))
+(define (bytes-from-posn port offset len)
+  (file-position port offset)
+  (read-bytes len port))
+
+;; assumes big-endian
+(: integer-bytes->unsigned (Bytes -> Natural))
+(define (integer-bytes->unsigned b)
+  (define i (integer-bytes->integer b #f #t))
+  (cond [(< i 0) (error 'integer-bytes->unsigned "impossible 20111114")]
+        [else i]))
+
+(: read-non-eof-byte (Input-Port -> Byte))
+(define (read-non-eof-byte port)
+  (define b (read-byte port))
+  (cond [(eof-object? b) (error 'read-non-eof-byte "got #<eof>")]
+        [else b]))
+
+
 (check-equal? (read-variable-length
                (open-input-bytes (bytes #x00))) 0)
 (check-equal? (read-variable-length 
                (open-input-bytes (bytes #x81 00))) #x80)
 (check-equal? (read-variable-length
                (open-input-bytes (bytes #x81 #x80 #x80 #x00))) #x200000)
-
-
-;; given a port and an offset, read the chunk info starting at that offset.
-(define (bytes->chunk port offset)
-  (match (bytes-from-posn port offset 8)
-    [(? eof-object? e) #f]
-    [bytes-in
-     (let* ([id (subbytes bytes-in 0 4)]
-            [len (integer-bytes->integer (subbytes bytes-in 4 8) #f #t)])
-       (chunk id len (+ offset 8)))]))
-
-;; bytes-from-posn : port nat nat -> bytes
-;; read a piece from a file
-(define (bytes-from-posn port offset len)
-  (file-position port offset)
-  (read-bytes len port))

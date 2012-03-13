@@ -11,9 +11,9 @@
                 (build-path contrib-file)))
 
 ;; regression tests...
-(check-equal? (first parsed) 'multi)
-(check-equal? (second parsed)
-              '(ticks-per-quarter 120))
-(check-equal? (length (second (third parsed)))
+(check-equal? (MIDIFile-format parsed) 'multi)
+(check-equal? (MIDIFile-division parsed)
+              (TicksPerQuarter 120))
+(check-equal? (length (second (MIDIFile-tracks parsed)))
               2379)
 
