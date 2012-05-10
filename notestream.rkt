@@ -12,7 +12,8 @@
          (struct-out Note)
          note-tones
          note-filter
-         event-sequence->note-sequence)
+         event-sequence->note-sequence
+         notes-clip)
 
 (define-struct: Note ([notenum : Byte]
                       [velocity : Byte]
@@ -96,3 +97,18 @@
     [(cons (list t1 (ChannelMessage 'note-off ch1 (list n1 vel1)))
            rest)
      ((event-sequence->note-sequence note-num) rest)]))
+
+
+;; return a list containing only those note-infos whose start 
+;; falls in between start and end, and subtract so that 'start'
+;; is the new zero
+(: notes-clip ((Listof Note) Natural Natural -> (Listof Note)))
+(define (notes-clip note-infos start end)
+  (for/list ([i (in-list note-infos)]
+             #:when (<= start (Note-start i) (sub1 end)))
+    (define new-start (- (Note-start i) start))   
+    (cond [(< new-start 0)
+           (error 'make-type-checker-happy)]
+          [else
+           (Note (Note-notenum i) (Note-velocity i)
+                 new-start (Note-duration i))])))
