@@ -7,10 +7,9 @@
 @author[(author+email "John Clements" 
                       "clements@racket-lang.org")]
 
-@(require (for-label racket
-                     (this-package-in main)))
-
-@defmodule/this-package[main]{This package can read and parse MIDI files written in the 
+@(require (for-label racket "main.rkt"))
+`
+@defmodule[main]{This package can read and parse MIDI files written in the 
 "Standard MIDI File" format, also known as "SMF", and usually
 appearing in files ending with ".mid".
 

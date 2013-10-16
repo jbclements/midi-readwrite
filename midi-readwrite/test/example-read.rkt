@@ -4,6 +4,8 @@
          racket/runtime-path
          rackunit)
 
+;; boy, these tests are pathetic....
+
 (define-runtime-path contrib-file
   "../contrib/lmfao-party_rock_anthem.mid")
 

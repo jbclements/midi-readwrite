@@ -1,2 +1,2 @@
-This repository is the backing store for a Racket PLaneT package that
-can read standard MIDI files (usually SMF or .mid files).
+This repository is a racket package for reading and writing standard
+MIDI files (usually SMF or .mid files).
