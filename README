@@ -1,2 +1,3 @@
-This repository is a racket package for reading and writing standard
-MIDI files (usually SMF or .mid files).
+This repository is a racket package for reading standard
+MIDI files (usually SMF or .mid files). Despite the name,
+there's not yet any support for writing these files.
