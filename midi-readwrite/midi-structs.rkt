@@ -1,5 +1,6 @@
 #lang typed/racket/base
 
+;; this file defines the structures used by the library.
 
 (provide (struct-out MIDIFile)
          (struct-out TicksPerQuarter)

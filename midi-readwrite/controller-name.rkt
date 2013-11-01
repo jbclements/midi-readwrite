@@ -2,7 +2,7 @@
 
 (provide num->controller-name)
 
-;; controller names taken from 
+;; this file contains controller names taken from 
 ;; http://www.midi.org/techspecs/midimessages.php
 (: num->controller-name (Integer -> String))
 (define (num->controller-name n)

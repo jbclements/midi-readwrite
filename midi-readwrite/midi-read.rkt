@@ -17,7 +17,7 @@
 ;; FILE CONSTRUCTS:
 (struct: FileChunk ([id : Bytes] [len : Natural] [offset : Natural]))
 
-;; given a path, parse the file into a list containing
+;; given a path, parse the file into MIDIFile containing
 ;; the MIDI format, the time division, and a list of 
 ;; tracks, where a track contains a list of time/message
 ;; lists
@@ -25,7 +25,7 @@
 (define (midi-file-parse path)
   (define p (open-input-file path))
   (midi-port-parse p))
-
+ 
 ;; given a port with the file-position operator, 
 ;; parse the file into a list containing
 ;; the MIDI format, the time division, and a list of 
