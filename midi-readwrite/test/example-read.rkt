@@ -9,6 +9,9 @@
 (define-runtime-path contrib-file
   "../contrib/lmfao-party_rock_anthem.mid")
 
+(define-runtime-path bach-file
+  "../contrib/bwv772.mid")
+
 (define parsed (midi-file-parse 
                 (build-path contrib-file)))
 
@@ -18,4 +21,11 @@
               (TicksPerQuarter 120))
 (check-equal? (length (second (MIDIFile-tracks parsed)))
               2379)
+
+(check-equal? (length (MIDIFile->notelist parsed))
+              5506)
+(check-equal? (length (MIDIFile->notelist (midi-file-parse
+                                           bach-file)))
+              474)
+
 

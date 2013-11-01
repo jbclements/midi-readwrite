@@ -18,10 +18,10 @@ non-ambiguous; the best way to understand it is to
 read the source in "midi-structs.rkt"
 
 
-@defproc[(midi-file-parse [path path-string?]) (listof list?)]{
+@defproc[(midi-file-parse [path path-string?]) MIDIFile?]{
  Given a path, parse the file as a standard MIDI file.}
 
-@defproc[(midi-port-parse [port port?]) (listof list?)]{
+@defproc[(midi-port-parse [port port?]) MIDIFile?]{
  Given a port searchable with @racket[file-position], parse
  the content as a standard MIDI file.}
 
@@ -35,6 +35,7 @@ I bet there's a nice way to format this....
 
 Too lazy to format the rest of these right now....
 
+                                                  
 @verbatim{
 (define-type MIDIFormat (U 'multi 'single 'sequential))
 (define-type MIDIDivision (U TicksPerQuarter SMPTE))
@@ -57,6 +58,24 @@ Too lazy to format the rest of these right now....
 (define-type MIDIKind Symbol)
 
 }
+
+@defproc[(MIDIFile->notelist [file MIDIFile?] [#:careful? careful? #f]) (listof note?)]{
+ Returns a list of the notes occurring in the file.  This is principally useful
+ for a "getting started quickly" application that wants to ignore all of the 
+ performance, tempo, channel, and other information in the MIDI file and just 
+ get a list of all the notes in the file.
+ 
+ The "careful?" flag will cause this function to signal errors when an already-playing
+ note is started again, or when a not-currently-playing note is stopped.
+ 
+ This function has been tested on only two midi files. Let me know if you have 
+ trouble with it.
+ }
+
+@defstruct[note ([pitch midi-note-num?] [time tick?] [duration tick?])]{
+ Represents a note, for the purposes of @racket[MIDIFile->notelist]}
+
+
 
 }
 
