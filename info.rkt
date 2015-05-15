@@ -9,4 +9,5 @@
         "typed-racket-more"))
 
 (define build-deps
-  (list "scribble-lib"))
+  (list "scribble-lib"
+        "racket-doc"))
