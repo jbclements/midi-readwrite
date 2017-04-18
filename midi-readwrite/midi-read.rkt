@@ -187,7 +187,7 @@
       [else 
        (cond [(not (= 0 (bitwise-and #x80 next-byte)))
               ;; new message
-              (define channel (bitwise-and #x7 next-byte))
+              (define channel (bitwise-and #xf next-byte))
               (define message-nibble (high-nibble next-byte))
               (define message-kind (bits->event-type message-nibble))
               (define parameter-1 (read-non-eof-byte port))
@@ -208,7 +208,7 @@
                         "can't continue from non-channel event")]
                 [else
                  ;; running status , the midi-evt was actually parameter 1.
-                 (define channel (bitwise-and #x7 prior-event-type-byte))
+                 (define channel (bitwise-and #xf prior-event-type-byte))
                  (define message-nibble (high-nibble 
                                          prior-event-type-byte))
                  (define message-kind (bits->event-type message-nibble))
