@@ -28,4 +28,5 @@
                                            bach-file)))
               474)
 
-
+;; test for midi events being correctly assigned channel numbers in the full range 0 to 15
+(check-equal? (ChannelMessage-channel (cadr (list-ref (list-ref (MIDIFile-tracks parsed) 14) 1))) 9)
